@@ -1,6 +1,7 @@
 venv/
+.venv/
 node_modules/
-__pycache__/
-.env
-chroma_db/
 frontend/node_modules/
+__pycache__/
+vectorstore/
+chroma_db/
