@@ -1,0 +1,6 @@
+venv/
+node_modules/
+__pycache__/
+.env
+chroma_db/
+frontend/node_modules/
