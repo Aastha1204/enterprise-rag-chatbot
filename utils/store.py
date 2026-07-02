@@ -5,14 +5,14 @@ embedding = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
+DB_DIR = "vectorstore"
+
 def store_chunks(chunks):
 
     db = Chroma.from_documents(
         documents=chunks,
         embedding=embedding,
-        persist_directory="vectorstore"
+        persist_directory=DB_DIR
     )
 
-    db.persist()
-
-    return db
+    print("✅ Embeddings Stored Successfully ")

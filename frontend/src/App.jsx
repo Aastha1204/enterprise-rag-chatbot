@@ -62,37 +62,55 @@ export default function App() {
     setLoading(false);
   };
 
-  // UPLOAD PDF
+ // UPLOAD PDF
 
-  const uploadPDF = async () => {
+const uploadPDF = async () => {
 
-    if (!file) return;
+  if (!file) {
+    alert("Please select a PDF first");
+    return;
+  }
 
-    const formData = new FormData();
+  const formData = new FormData();
 
-    formData.append("file", file);
+  formData.append("file", file);
 
-    try {
+  try {
 
-      const response = await axios.post(
-        "http://127.0.0.1:8000/upload",
-        formData
-      );
+    console.log("Uploading PDF...");
 
-      alert(response.data.message);
+    const response = await axios.post(
+      "http://127.0.0.1:8000/upload-pdf",
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      }
+    );
 
-      setUploadedFiles((prev) => [
-        ...prev,
-        file.name
-      ]);
+    console.log("SUCCESS:", response.data);
 
-      setFile(null);
+    alert(response.data.message);
 
-    } catch (error) {
+    setUploadedFiles((prev) => [
+      ...prev,
+      file.name
+    ]);
 
-      console.log(error);
+    setFile(null);
+
+  } catch (error) {
+
+    console.log("UPLOAD ERROR:", error);
+
+    if (error.response) {
+      console.log("Backend Error:", error.response.data);
     }
-  };
+
+    alert("Upload failed 😭");
+  }
+};
 
   return (
 
@@ -128,10 +146,9 @@ export default function App() {
         <div>
 
           <div
+   onDragOver={(e) => e.preventDefault()}
+
   onDrop={async (e) => {
-
-  e.preventDefault();
-
   const droppedFile = e.dataTransfer.files[0];
 
   if (!droppedFile) return;
@@ -145,7 +162,7 @@ export default function App() {
   try {
 
     const response = await axios.post(
-      "http://127.0.0.1:8000/upload",
+      "http://127.0.0.1:8000/upload-pdf",
       formData
     );
 
