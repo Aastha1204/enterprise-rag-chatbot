@@ -25,7 +25,7 @@ export default function App() {
 
     try {
 
-      const res = await fetch("http://127.0.0.1:8000/chat", {
+      const res = await fetch("/chat", {
 
         method: "POST",
 
@@ -80,7 +80,7 @@ const uploadPDF = async () => {
     console.log("Uploading PDF...");
 
     const response = await axios.post(
-      "http://127.0.0.1:8000/upload-pdf",
+      "/upload-pdf",
       formData,
       {
         headers: {
@@ -162,7 +162,7 @@ const uploadPDF = async () => {
   try {
 
     const response = await axios.post(
-      "http://127.0.0.1:8000/upload-pdf",
+      "/upload-pdf",
       formData
     );
 
