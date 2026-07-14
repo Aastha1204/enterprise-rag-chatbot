@@ -56,6 +56,7 @@ app.add_middleware(
 
 class Question(BaseModel):
     question: str
+    source: str | None = None
 
 # =========================
 # HEALTH CHECK
@@ -125,7 +126,8 @@ def chat(data: Question):
         print("QUESTION:", user_question)
 
         # RETRIEVE DOCS
-        retrieved_docs = retrieve_docs(user_question)
+        source_filter = f"{UPLOAD_FOLDER}/{data.source}" if data.source else None
+        retrieved_docs = retrieve_docs(user_question, source=source_filter)
 
         print("DOCS FOUND:", len(retrieved_docs))
 

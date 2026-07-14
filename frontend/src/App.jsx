@@ -13,6 +13,7 @@ export default function App() {
   const [chats, setChats] = useState([]);
   const [file, setFile] = useState(null);
   const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [selectedDoc, setSelectedDoc] = useState(null);
   const [loading, setLoading] = useState(false);
 
   // SEND MESSAGE
@@ -34,7 +35,8 @@ export default function App() {
         },
 
         body: JSON.stringify({
-          question: message
+          question: message,
+          source: selectedDoc
         }),
       });
 
@@ -97,6 +99,8 @@ const uploadPDF = async () => {
       ...prev,
       file.name
     ]);
+
+    setSelectedDoc(file.name);
 
     setFile(null);
 
@@ -172,6 +176,8 @@ const uploadPDF = async () => {
       ...prev,
       droppedFile.name
     ]);
+
+    setSelectedDoc(droppedFile.name);
 
   } catch (error) {
 
@@ -252,21 +258,40 @@ const uploadPDF = async () => {
 
             ) : (
 
-              uploadedFiles.map((doc, index) => (
+              <>
 
                 <div
-                  key={index}
+                  onClick={() => setSelectedDoc(null)}
                   style={{
-                    background:"#1f2937",
+                    background: selectedDoc === null ? "#2563eb" : "#1f2937",
                     padding:"14px",
                     borderRadius:"10px",
-                    marginBottom:"10px"
+                    marginBottom:"10px",
+                    cursor:"pointer"
                   }}
                 >
-                  📄 {doc}
+                  🗂️ All Documents
                 </div>
 
-              ))
+                {uploadedFiles.map((doc, index) => (
+
+                  <div
+                    key={index}
+                    onClick={() => setSelectedDoc(doc)}
+                    style={{
+                      background: selectedDoc === doc ? "#2563eb" : "#1f2937",
+                      padding:"14px",
+                      borderRadius:"10px",
+                      marginBottom:"10px",
+                      cursor:"pointer"
+                    }}
+                  >
+                    📄 {doc}
+                  </div>
+
+                ))}
+
+              </>
 
             )
           }
@@ -455,7 +480,18 @@ const uploadPDF = async () => {
 
         <div style={{
           padding:"20px",
-          borderTop:"1px solid #1f2937",
+          borderTop:"1px solid #1f2937"
+        }}>
+
+        <div style={{
+          color:"#9ca3af",
+          fontSize:"13px",
+          marginBottom:"10px"
+        }}>
+          Asking: {selectedDoc ? `📄 ${selectedDoc}` : "🗂️ All Documents"}
+        </div>
+
+        <div style={{
           display:"flex",
           gap:"15px"
         }}>
@@ -491,6 +527,8 @@ const uploadPDF = async () => {
           >
             Send
           </button>
+
+        </div>
 
         </div>
 
