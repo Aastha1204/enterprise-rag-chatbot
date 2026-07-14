@@ -23,15 +23,11 @@ def get_db():
         )
     return _db
 
-def store_chunks(chunks):
+def store_chunks(chunks, batch_size=16):
 
-    db = Chroma.from_documents(
-        documents=chunks,
-        embedding=get_embedding(),
-        persist_directory=DB_DIR
-    )
+    db = get_db()
 
-    global _db
-    _db = db
+    for i in range(0, len(chunks), batch_size):
+        db.add_documents(chunks[i:i + batch_size])
 
     print("✅ Embeddings Stored Successfully ")
