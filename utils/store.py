@@ -1,5 +1,5 @@
 from langchain_community.vectorstores import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import FastEmbedEmbeddings
 
 DB_DIR = "vectorstore"
 
@@ -9,7 +9,7 @@ _db = None
 def get_embedding():
     global _embedding
     if _embedding is None:
-        _embedding = HuggingFaceEmbeddings(
+        _embedding = FastEmbedEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
     return _embedding
