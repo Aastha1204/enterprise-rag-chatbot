@@ -10,7 +10,8 @@ def get_embedding():
     global _embedding
     if _embedding is None:
         _embedding = FastEmbedEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            providers=["CPUExecutionProvider"]
         )
     return _embedding
 
