@@ -1,540 +1,225 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import axios from "axios";
+import Sidebar from "./components/Sidebar.jsx";
+import ChatWindow from "./components/ChatWindow.jsx";
+import "./App.css";
+
+const STORAGE_KEY = "rag_chat_sessions_v1";
+
 const currentTime = () => {
   return new Date().toLocaleTimeString([], {
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
   });
 };
 
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+
+const makeSession = () => ({
+  id: newId(),
+  title: "New Chat",
+  messages: [],
+  selectedDoc: null,
+});
+
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {
+    console.log("Failed to load sessions:", e);
+  }
+  return [makeSession()];
+}
+
 export default function App() {
 
-  const [message, setMessage] = useState("");
-  const [chats, setChats] = useState([]);
-  const [file, setFile] = useState(null);
-  const [uploadedFiles, setUploadedFiles] = useState([]);
-  const [selectedDoc, setSelectedDoc] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [sessions, setSessions] = useState(loadSessions);
+  const [activeSessionId, setActiveSessionId] = useState(() => sessions[0].id);
+  const [documents, setDocuments] = useState([]);
 
-  // SEND MESSAGE
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+  }, [sessions]);
 
-  const sendMessage = async () => {
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
 
-    if (!message) return;
-
-    setLoading(true);
-
+  const fetchDocuments = async () => {
     try {
-
-      const res = await fetch("/chat", {
-
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          question: message,
-          source: selectedDoc
-        }),
-      });
-
-      const data = await res.json();
-
-      setChats((prev) => [
-        ...prev,
-        {
-  question: message,
-  answer: data.answer,
-  source: data.source,
-  page: data.page,
-  time: currentTime()
-}
-      ]);
-
-      setMessage("");
-
-    } catch (error) {
-
-      console.log(error);
-
+      const res = await axios.get("/documents");
+      setDocuments(res.data.documents);
+    } catch (e) {
+      console.log("Failed to fetch documents:", e);
     }
-
-    setLoading(false);
   };
 
- // UPLOAD PDF
+  const activeSession =
+    sessions.find((s) => s.id === activeSessionId) || sessions[0];
 
-const uploadPDF = async () => {
-
-  if (!file) {
-    alert("Please select a PDF first");
-    return;
-  }
-
-  const formData = new FormData();
-
-  formData.append("file", file);
-
-  try {
-
-    console.log("Uploading PDF...");
-
-    const response = await axios.post(
-      "/upload-pdf",
-      formData,
-      {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      }
+  const updateSession = (sessionId, updater) => {
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? updater(s) : s))
     );
+  };
 
-    console.log("SUCCESS:", response.data);
+  const updateMessage = (sessionId, messageId, updater) => {
+    updateSession(sessionId, (s) => ({
+      ...s,
+      messages: s.messages.map((m) =>
+        m.id === messageId ? updater(m) : m
+      ),
+    }));
+  };
 
-    alert(response.data.message);
+  const handleNewChat = () => {
+    const session = makeSession();
+    setSessions((prev) => [session, ...prev]);
+    setActiveSessionId(session.id);
+  };
 
-    setUploadedFiles((prev) => [
-      ...prev,
-      file.name
-    ]);
+  const handleSwitchSession = (id) => {
+    setActiveSessionId(id);
+  };
 
-    setSelectedDoc(file.name);
+  const handleDeleteSession = (id) => {
+    setSessions((prev) => {
+      const remaining = prev.filter((s) => s.id !== id);
+      const next = remaining.length > 0 ? remaining : [makeSession()];
+      if (id === activeSessionId) {
+        setActiveSessionId(next[0].id);
+      }
+      return next;
+    });
+  };
 
-    setFile(null);
+  const handleSelectDoc = (filename) => {
+    updateSession(activeSessionId, (s) => ({ ...s, selectedDoc: filename }));
+  };
 
-  } catch (error) {
+  const handleDocumentsChanged = (uploadedFilename, deletedFilename) => {
+    fetchDocuments();
 
-    console.log("UPLOAD ERROR:", error);
-
-    if (error.response) {
-      console.log("Backend Error:", error.response.data);
+    if (uploadedFilename) {
+      updateSession(activeSessionId, (s) => ({
+        ...s,
+        selectedDoc: uploadedFilename,
+      }));
     }
 
-    alert("Upload failed 😭");
-  }
-};
+    if (deletedFilename) {
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.selectedDoc === deletedFilename ? { ...s, selectedDoc: null } : s
+        )
+      );
+    }
+  };
+
+  const handleSend = async (question) => {
+    const sessionId = activeSessionId;
+    const session = sessions.find((s) => s.id === sessionId);
+    const selectedDoc = session.selectedDoc;
+
+    const userMsgId = newId();
+    const aiMsgId = newId();
+
+    updateSession(sessionId, (s) => ({
+      ...s,
+      title:
+        s.title === "New Chat"
+          ? question.slice(0, 40) + (question.length > 40 ? "…" : "")
+          : s.title,
+      messages: [
+        ...s.messages,
+        { id: userMsgId, role: "user", content: question, time: currentTime() },
+        {
+          id: aiMsgId,
+          role: "ai",
+          content: "",
+          time: currentTime(),
+          citations: [],
+          streaming: true,
+        },
+      ],
+    }));
+
+    try {
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, source: selectedDoc }),
+      });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop();
+
+        for (const part of parts) {
+          if (!part.startsWith("data: ")) continue;
+
+          const payload = JSON.parse(part.slice(6));
+
+          if (payload.type === "citations") {
+            updateMessage(sessionId, aiMsgId, (m) => ({
+              ...m,
+              citations: payload.citations,
+            }));
+          } else if (payload.type === "token") {
+            updateMessage(sessionId, aiMsgId, (m) => ({
+              ...m,
+              content: m.content + payload.content,
+            }));
+          } else if (payload.type === "done") {
+            updateMessage(sessionId, aiMsgId, (m) => ({
+              ...m,
+              streaming: false,
+            }));
+          } else if (payload.type === "error") {
+            updateMessage(sessionId, aiMsgId, (m) => ({
+              ...m,
+              content: payload.message,
+              streaming: false,
+            }));
+          }
+        }
+      }
+    } catch (error) {
+      console.log(error);
+      updateMessage(sessionId, aiMsgId, (m) => ({
+        ...m,
+        content: "Backend crashed 😭",
+        streaming: false,
+      }));
+    }
+  };
 
   return (
-
-    <div style={{
-      background:"#0f172a",
-      height:"100vh",
-      display:"flex",
-      color:"white",
-      fontFamily:"Arial"
-    }}>
-
-      {/* Sidebar */}
-
-      <div style={{
-        width:"320px",
-        background:"#111827",
-        padding:"20px",
-        borderRight:"1px solid #1f2937",
-        display:"flex",
-        flexDirection:"column"
-      }}>
-
-        <h1 style={{
-          fontSize:"30px",
-          fontWeight:"bold",
-          marginBottom:"30px"
-        }}>
-          Enterprise AI 🚀
-        </h1>
-
-        {/* Upload */}
-
-        <div>
-
-          <div
-   onDragOver={(e) => e.preventDefault()}
-
-  onDrop={async (e) => {
-  const droppedFile = e.dataTransfer.files[0];
-
-  if (!droppedFile) return;
-
-  setFile(droppedFile);
-
-  const formData = new FormData();
-
-  formData.append("file", droppedFile);
-
-  try {
-
-    const response = await axios.post(
-      "/upload-pdf",
-      formData
-    );
-
-    alert(response.data.message);
-
-    setUploadedFiles((prev) => [
-      ...prev,
-      droppedFile.name
-    ]);
-
-    setSelectedDoc(droppedFile.name);
-
-  } catch (error) {
-
-    console.log(error);
-
-    alert("Upload failed");
-
-  }
-
-}}
-  style={{
-    border:"2px dashed #2563eb",
-    padding:"30px",
-    borderRadius:"16px",
-    textAlign:"center",
-    marginBottom:"15px",
-    background:"#1e293b",
-    cursor:"pointer"
-  }}
->
-
-  <p style={{
-    fontSize:"16px",
-    marginBottom:"10px"
-  }}>
-    📂 Drag & Drop PDF Here
-  </p>
-
-  <input
-    type="file"
-    onChange={(e) => setFile(e.target.files[0])}
-    style={{
-      color:"white"
-    }}
-  />
-
-</div>
-
-          <button
-            onClick={uploadPDF}
-            style={{
-              width:"100%",
-              padding:"15px",
-              background:"#2563eb",
-              border:"none",
-              color:"white",
-              borderRadius:"12px",
-              marginTop:"10px",
-              cursor:"pointer",
-              fontSize:"16px",
-              fontWeight:"bold"
-            }}
-          >
-            + Upload PDF
-          </button>
-
-        </div>
-
-        {/* Uploaded Documents */}
-
-        <div style={{marginTop:"40px"}}>
-
-          <p style={{
-            color:"#9ca3af",
-            marginBottom:"15px"
-          }}>
-            Uploaded Documents
-          </p>
-
-          {
-            uploadedFiles.length === 0 ? (
-
-              <div style={{
-                color:"#6b7280"
-              }}>
-                No PDFs uploaded yet.
-              </div>
-
-            ) : (
-
-              <>
-
-                <div
-                  onClick={() => setSelectedDoc(null)}
-                  style={{
-                    background: selectedDoc === null ? "#2563eb" : "#1f2937",
-                    padding:"14px",
-                    borderRadius:"10px",
-                    marginBottom:"10px",
-                    cursor:"pointer"
-                  }}
-                >
-                  🗂️ All Documents
-                </div>
-
-                {uploadedFiles.map((doc, index) => (
-
-                  <div
-                    key={index}
-                    onClick={() => setSelectedDoc(doc)}
-                    style={{
-                      background: selectedDoc === doc ? "#2563eb" : "#1f2937",
-                      padding:"14px",
-                      borderRadius:"10px",
-                      marginBottom:"10px",
-                      cursor:"pointer"
-                    }}
-                  >
-                    📄 {doc}
-                  </div>
-
-                ))}
-
-              </>
-
-            )
-          }
-
-        </div>
-
-      </div>
-
-      {/* Main Chat */}
-
-      <div style={{
-        flex:1,
-        display:"flex",
-        flexDirection:"column"
-      }}>
-
-        {/* Header */}
-
-        <div style={{
-          padding:"20px",
-          borderBottom:"1px solid #1f2937",
-          fontSize:"26px",
-          fontWeight:"bold",
-          textAlign:"center"
-        }}>
-          Enterprise Knowledge Assistant 🤖
-        </div>
-
-        {/* Messages */}
-
-        <div style={{
-          flex:1,
-          padding:"30px",
-          overflowY:"auto"
-        }}>
-
-          {/* Welcome Message */}
-
-          <div style={{
-            background:"#1e293b",
-            padding:"20px",
-            borderRadius:"16px",
-            maxWidth:"700px",
-            marginBottom:"20px"
-          }}>
-            👋 Hello! Ask me anything about uploaded company documents.
-          </div>
-
-          {/* Chat History */}
-
-          <div
-            style={{
-              display:"flex",
-              flexDirection:"column",
-              gap:"20px"
-            }}
-          >
-
-            {chats.map((chat, index) => (
-
-              <div key={index}>
-
-                {/* User Message */}
-
-                <div
-  style={{
-    display:"flex",
-    justifyContent:"flex-end"
-  }}
->
-
-  <div
-    style={{
-      background:"#2563eb",
-      padding:"18px",
-      borderRadius:"18px",
-      marginBottom:"10px",
-      maxWidth:"700px",
-      width:"fit-content"
-    }}
-  >
-
-    <div>
-      {chat.question}
-    </div>
-
-    <div
-      style={{
-        fontSize:"12px",
-        opacity:"0.7",
-        marginTop:"8px",
-        textAlign:"right"
-      }}
-    >
-      {chat.time}
-    </div>
-
-  </div>
-
-</div>
-
-             {/* AI Message */}
-
-<div
-  style={{
-    display:"flex",
-    justifyContent:"flex-start"
-  }}
->
-
-  <div
-    style={{
-      background:"#1f2937",
-      padding:"18px",
-      borderRadius:"18px",
-      maxWidth:"700px",
-      lineHeight:"1.6"
-    }}
-  >
-
-    <div>
-      🤖 {chat.answer}
-    </div>
-
-    <div
-      style={{
-        fontSize:"12px",
-        opacity:"0.7",
-        marginTop:"8px"
-      }}
-    >
-      {chat.time}
-    </div>
-    <div
-      style={{
-        marginTop:"10px",
-        color:"#9ca3af",
-        fontSize:"14px"
-      }}
-    >
-      📄 Source: {chat.source} | Page {chat.page}
-    </div>
-
-  </div>
-
-</div> 
-</div>
-            ))}  
-
-            {/* Loading */}
-
-{
-  loading && (
-
-    <div style={{
-      background:"#1f2937",
-      padding:"18px",
-      borderRadius:"16px",
-      maxWidth:"250px"
-    }}>
-
-      <div
-        style={{
-          display:"flex",
-          gap:"6px",
-          alignItems:"center"
-        }}
-      >
-        <span>🤖 Typing</span>
-
-        <div className="dot"></div>
-        <div className="dot"></div>
-        <div className="dot"></div>
-
-      </div>
-
-    </div>
-
-  )
-}
-          </div>
-
-        </div>
-          
-        {/* Input */}
-
-        <div style={{
-          padding:"20px",
-          borderTop:"1px solid #1f2937"
-        }}>
-
-        <div style={{
-          color:"#9ca3af",
-          fontSize:"13px",
-          marginBottom:"10px"
-        }}>
-          Asking: {selectedDoc ? `📄 ${selectedDoc}` : "🗂️ All Documents"}
-        </div>
-
-        <div style={{
-          display:"flex",
-          gap:"15px"
-        }}>
-
-          <input
-            value={message}
-            onChange={(e)=>setMessage(e.target.value)}
-            placeholder="Ask your question..."
-            style={{
-              flex:1,
-              padding:"16px",
-              borderRadius:"12px",
-              border:"none",
-              background:"#1e293b",
-              color:"white",
-              fontSize:"16px",
-              outline:"none"
-            }}
-          />
-
-          <button
-            onClick={sendMessage}
-            style={{
-              background:"#2563eb",
-              border:"none",
-              color:"white",
-              padding:"16px 30px",
-              borderRadius:"12px",
-              fontSize:"16px",
-              cursor:"pointer",
-              fontWeight:"bold"
-            }}
-          >
-            Send
-          </button>
-
-        </div>
-
-        </div>
-
-      </div>
-
+    <div className="app-shell">
+      <Sidebar
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onNewChat={handleNewChat}
+        onSwitchSession={handleSwitchSession}
+        onDeleteSession={handleDeleteSession}
+        documents={documents}
+        selectedDoc={activeSession.selectedDoc}
+        onSelectDoc={handleSelectDoc}
+        onDocumentsChanged={handleDocumentsChanged}
+      />
+      <ChatWindow session={activeSession} onSend={handleSend} />
     </div>
   );
 }
-

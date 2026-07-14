@@ -32,3 +32,19 @@ def store_chunks(chunks, batch_size=16):
         db.add_documents(chunks[i:i + batch_size])
 
     print("✅ Embeddings Stored Successfully ")
+
+def list_documents():
+    db = get_db()
+    data = db.get(include=["metadatas"])
+
+    docs = {}
+    for meta in data["metadatas"]:
+        source = meta.get("source")
+        if source:
+            docs[source] = docs.get(source, 0) + 1
+
+    return docs
+
+def delete_document(source):
+    db = get_db()
+    db.delete(where={"source": source})

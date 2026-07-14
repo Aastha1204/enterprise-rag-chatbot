@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from groq import Groq
@@ -8,6 +9,7 @@ from dotenv import load_dotenv
 import shutil
 import os
 import sys
+import json
 
 if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -15,7 +17,7 @@ if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != "utf-8":
 
 from utils.pdf_loader import load_pdf
 from utils.chunking import chunk_data
-from utils.store import store_chunks
+from utils.store import store_chunks, list_documents, delete_document
 from utils.retriever import retrieve_docs
 
 # =========================
@@ -113,58 +115,105 @@ async def upload_pdf(file: UploadFile = File(...)):
         }
 
 # =========================
-# CHAT
+# DOCUMENT MANAGEMENT
+# =========================
+
+@app.get("/documents")
+def get_documents():
+
+    docs = list_documents()
+
+    result = []
+
+    for source, chunk_count in docs.items():
+
+        result.append({
+            "filename": os.path.basename(source),
+            "chunks": chunk_count,
+            "size": os.path.getsize(source) if os.path.exists(source) else 0,
+            "uploaded_at": os.path.getmtime(source) if os.path.exists(source) else 0
+        })
+
+    result.sort(key=lambda d: d["uploaded_at"], reverse=True)
+
+    return {"documents": result}
+
+@app.delete("/documents/{filename}")
+def remove_document(filename: str):
+
+    source = f"{UPLOAD_FOLDER}/{filename}"
+
+    try:
+
+        delete_document(source)
+
+        if os.path.exists(source):
+            os.remove(source)
+
+        return {"message": f"{filename} deleted successfully"}
+
+    except Exception as e:
+
+        print("DELETE ERROR:", str(e))
+
+        return {
+            "message": "Delete failed 😭",
+            "error": str(e)
+        }
+
+# =========================
+# CHAT (streaming)
 # =========================
 
 @app.post("/chat")
 def chat(data: Question):
 
-    try:
+    def event_stream():
 
-        user_question = data.question
+        try:
 
-        print("QUESTION:", user_question)
+            user_question = data.question
 
-        # RETRIEVE DOCS
-        source_filter = f"{UPLOAD_FOLDER}/{data.source}" if data.source else None
-        retrieved_docs = retrieve_docs(user_question, source=source_filter)
+            print("QUESTION:", user_question)
 
-        print("DOCS FOUND:", len(retrieved_docs))
+            source_filter = f"{UPLOAD_FOLDER}/{data.source}" if data.source else None
+            retrieved_docs = retrieve_docs(user_question, source=source_filter)
 
-        if len(retrieved_docs) == 0:
+            print("DOCS FOUND:", len(retrieved_docs))
 
-            return {
-                "answer": "No relevant information found 😭",
-                "source": "None",
-                "page": 0
-            }
+            if len(retrieved_docs) == 0:
 
-        source = retrieved_docs[0].metadata.get(
-            "source",
-            "Unknown"
-        )
+                yield f"data: {json.dumps({'type': 'citations', 'citations': []})}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'content': 'No relevant information found 😭'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
 
-        page = retrieved_docs[0].metadata.get(
-            "page",
-            0
-        )
-
-        context = "\n".join([
-            doc.page_content
-            for doc in retrieved_docs
-        ])
-
-        print("CONTEXT READY")
-
-        # LLM
-        response = client.chat.completions.create(
-
-            model="llama-3.3-70b-versatile",
-
-            messages=[
+            citations = [
                 {
-                    "role": "user",
-                    "content": f"""
+                    "source": doc.metadata.get("source", "Unknown"),
+                    "page": doc.metadata.get("page", 0) + 1,
+                    "snippet": doc.page_content[:300]
+                }
+                for doc in retrieved_docs
+            ]
+
+            yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
+
+            context = "\n".join([
+                doc.page_content
+                for doc in retrieved_docs
+            ])
+
+            print("CONTEXT READY")
+
+            stream = client.chat.completions.create(
+
+                model="llama-3.3-70b-versatile",
+
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"""
 Answer ONLY from provided context.
 
 If answer is not present, say:
@@ -176,29 +225,28 @@ Context:
 Question:
 {user_question}
 """
-                }
-            ]
-        )
+                    }
+                ],
 
-        answer = response.choices[0].message.content
+                stream=True
+            )
 
-        print("ANSWER GENERATED")
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield f"data: {json.dumps({'type': 'token', 'content': delta})}\n\n"
 
-        return {
-            "answer": answer,
-            "source": source,
-            "page": page + 1
-        }
+            print("ANSWER GENERATED")
 
-    except Exception as e:
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-        print("CHAT ERROR:", str(e))
+        except Exception as e:
 
-        return {
-            "answer": "Backend crashed 😭",
-            "source": "Error",
-            "page": 0
-        }
+            print("CHAT ERROR:", str(e))
+
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Backend crashed 😭'})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 # =========================
 # FRONTEND (built React app)
