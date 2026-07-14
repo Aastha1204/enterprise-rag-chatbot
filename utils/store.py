@@ -1,27 +1,34 @@
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import FastEmbedEmbeddings
 
+import threading
+
 DB_DIR = "vectorstore"
 
 _embedding = None
 _db = None
+_lock = threading.RLock()
 
 def get_embedding():
     global _embedding
     if _embedding is None:
-        _embedding = FastEmbedEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            providers=["CPUExecutionProvider"]
-        )
+        with _lock:
+            if _embedding is None:
+                _embedding = FastEmbedEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2",
+                    providers=["CPUExecutionProvider"]
+                )
     return _embedding
 
 def get_db():
     global _db
     if _db is None:
-        _db = Chroma(
-            persist_directory=DB_DIR,
-            embedding_function=get_embedding()
-        )
+        with _lock:
+            if _db is None:
+                _db = Chroma(
+                    persist_directory=DB_DIR,
+                    embedding_function=get_embedding()
+                )
     return _db
 
 def store_chunks(chunks, batch_size=16):
